@@ -9,6 +9,9 @@ const LIST_LOGO_SIZES = [48, 56, 64, 72, 80]
 const LIST_PADDINGS = [12, 14, 16, 18, 20]
 const LIST_GAPS = [12, 14, 16, 18, 20]
 const DEFAULT_ZOOM_INDEX = 2
+const DEFAULT_PLAYLIST_ID = 'playlist-default-iptv-org'
+const DEFAULT_PLAYLIST_NAME = 'IPTV-org'
+const DEFAULT_PLAYLIST_SOURCE = 'https://iptv-org.github.io/iptv/index.m3u'
 
 const emptyForm = {
   id: null,
@@ -135,6 +138,69 @@ function sanitizeStoredState(rawState) {
     playlists: Array.isArray(rawState.playlists) ? rawState.playlists : [],
     favorites: Array.isArray(rawState.favorites) ? rawState.favorites : [],
   }
+}
+
+function hasDefaultPlaylist(playlists) {
+  return playlists.some(
+    (playlist) =>
+      playlist.id === DEFAULT_PLAYLIST_ID || playlist.source === DEFAULT_PLAYLIST_SOURCE,
+  )
+}
+
+function createDefaultPlaylistDefinition() {
+  return {
+    id: DEFAULT_PLAYLIST_ID,
+    name: DEFAULT_PLAYLIST_NAME,
+    source: DEFAULT_PLAYLIST_SOURCE,
+    active: true,
+  }
+}
+
+async function loadPlaylistDefinition(formInput, desktopApi) {
+  const definition = serializePlaylistDefinition(formInput)
+  if (!definition.name || !definition.source) throw new Error('Playlist URL is required.')
+
+  const directStream = /\.(m3u8|mp4|webm|ogg)(\?|$)/i.test(definition.source)
+  if (directStream) {
+    return {
+      ...definition,
+      channels: [{ name: definition.name, url: definition.source, group: 'Live', logo: '' }],
+      lastLoadedAt: Date.now(),
+      error: '',
+    }
+  }
+
+  let response
+  if (desktopApi?.fetchPlaylist) {
+    try {
+      response = await desktopApi.fetchPlaylist(definition.source)
+    } catch (error) {
+      throw new Error(error.message)
+    }
+    const parsed = parsePlaylistText(response.text, {
+      baseUrl: response.finalUrl || definition.source,
+      playlistName: definition.name,
+      fallbackUrl: definition.source,
+    })
+    return { ...definition, channels: parsed.channels, lastLoadedAt: Date.now(), error: '' }
+  }
+
+  try {
+    response = await fetch(definition.source)
+  } catch {
+    throw new Error(
+      'Playlist URL could not be loaded due to CORS. Use a direct stream or enable desktop mode.',
+    )
+  }
+  if (!response.ok) throw new Error(`Playlist request failed with status ${response.status}.`)
+
+  const text = await response.text()
+  const parsed = parsePlaylistText(text, {
+    baseUrl: definition.source,
+    playlistName: definition.name,
+    fallbackUrl: definition.source,
+  })
+  return { ...definition, channels: parsed.channels, lastLoadedAt: Date.now(), error: '' }
 }
 
 function getDesktopApi() {
@@ -731,6 +797,7 @@ function ChannelPlayer({
 }
 
 function App() {
+  const defaultPlaylistAttemptedRef = useRef(false)
   const [state, setState] = useState(() => {
     try {
       return sanitizeStoredState(JSON.parse(window.localStorage.getItem(STORAGE_KEY)))
@@ -850,58 +917,48 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isPlayerChannelBrowserOpen, selectedChannel])
 
-  async function buildPlaylist(formInput) {
-    const definition = serializePlaylistDefinition(formInput)
-    if (!definition.name || !definition.source) throw new Error('Playlist URL is required.')
-
-    const directStream = /\.(m3u8|mp4|webm|ogg)(\?|$)/i.test(definition.source)
-    if (directStream) {
-      return {
-        ...definition,
-        channels: [{ name: definition.name, url: definition.source, group: 'Live', logo: '' }],
-        lastLoadedAt: Date.now(),
-        error: '',
-      }
+  useEffect(() => {
+    if (defaultPlaylistAttemptedRef.current) return
+    if (hasDefaultPlaylist(state.playlists)) {
+      defaultPlaylistAttemptedRef.current = true
+      return
     }
 
-    let response
-    if (desktopApi?.fetchPlaylist) {
+    defaultPlaylistAttemptedRef.current = true
+    let cancelled = false
+
+    async function ensureDefaultPlaylist() {
       try {
-        response = await desktopApi.fetchPlaylist(definition.source)
+        const playlist = await loadPlaylistDefinition(createDefaultPlaylistDefinition(), desktopApi)
+        if (cancelled) return
+
+        setState((currentState) => {
+          if (hasDefaultPlaylist(currentState.playlists)) {
+            return currentState
+          }
+
+          return {
+            ...currentState,
+            playlists: [playlist, ...currentState.playlists],
+          }
+        })
       } catch (error) {
-        throw new Error(error.message)
+        console.error('Failed to load the default IPTV-org playlist.', error)
       }
-      const parsed = parsePlaylistText(response.text, {
-        baseUrl: response.finalUrl || definition.source,
-        playlistName: definition.name,
-        fallbackUrl: definition.source,
-      })
-      return { ...definition, channels: parsed.channels, lastLoadedAt: Date.now(), error: '' }
     }
 
-    try {
-      response = await fetch(definition.source)
-    } catch {
-      throw new Error(
-        'Playlist URL could not be loaded due to CORS. Use a direct stream or enable desktop mode.',
-      )
-    }
-    if (!response.ok) throw new Error(`Playlist request failed with status ${response.status}.`)
+    void ensureDefaultPlaylist()
 
-    const text = await response.text()
-    const parsed = parsePlaylistText(text, {
-      baseUrl: definition.source,
-      playlistName: definition.name,
-      fallbackUrl: definition.source,
-    })
-    return { ...definition, channels: parsed.channels, lastLoadedAt: Date.now(), error: '' }
-  }
+    return () => {
+      cancelled = true
+    }
+  }, [desktopApi, state.playlists])
 
   async function handleLoadPlaylist(event) {
     event.preventDefault()
     setBusy(true)
     try {
-      const playlist = await buildPlaylist(formData)
+      const playlist = await loadPlaylistDefinition(formData, desktopApi)
       setState((currentState) => {
         const existingIndex = currentState.playlists.findIndex((item) => item.id === playlist.id)
         const nextPlaylists =

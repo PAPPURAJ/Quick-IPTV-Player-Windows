@@ -1,7 +1,7 @@
 {
   "name": "quickiptvplayer",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.1.0",
   "description": "Desktop IPTV player with playlist management, search, compact player mode, and Windows builds.",
   "author": "Pappuraj Bhottacharjee <info@pappuraj.com> (https://pappuraj.com)",
   "license": "MIT",
