@@ -11,7 +11,7 @@
     "dev": "vite",
     "dev:desktop": "concurrently -k \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
     "build": "vite build",
-    "dist:win": "set CSC_IDENTITY_AUTO_DISCOVERY=false&& npm run build && electron-builder --win nsis",
+    "dist:win": "set CSC_IDENTITY_AUTO_DISCOVERY=false&& npm run build && electron-builder --win nsis --publish never",
     "lint": "eslint .",
     "preview": "vite preview"
   },
