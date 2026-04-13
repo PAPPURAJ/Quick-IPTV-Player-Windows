@@ -56,7 +56,23 @@ jobs:
             release/*.blockmap
           if-no-files-found: error
 
-      - name: Publish GitHub release
+      - name: Publish Auto Build Release
+        if: github.ref_type == 'branch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-${{ github.ref_name }}-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Auto Build #${{ github.run_number }} (${{ github.ref_name }})
+          body: |
+            Automated Windows build from branch `${{ github.ref_name }}`.
+            Commit: `${{ github.sha }}`
+          prerelease: true
+          make_latest: false
+          files: |
+            release/*.exe
+            release/*.blockmap
+
+      - name: Publish Versioned GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
